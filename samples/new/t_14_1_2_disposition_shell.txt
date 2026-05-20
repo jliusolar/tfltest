@@ -1,0 +1,16 @@
+Table 14.1.2
+Summary of Subject Disposition
+Safety Population
+
+Disposition Category | Placebo (N=XX) | Drug A 50 mg (N=XX) | Total (N=XX)
+Randomized
+Treated
+Completed Study Treatment
+Discontinued Study Treatment
+  Adverse Event
+  Lack of Efficacy
+  Withdrawal by Subject
+  Lost to Follow-up
+  Other
+
+Footnote 1: Percentages are based on the number of randomized subjects in each treatment group.

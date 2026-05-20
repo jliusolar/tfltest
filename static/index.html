@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SAS TLF Assistant</title>
+    <link rel="stylesheet" href="/static/styles.css?v=0.2.13" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">TLF</div>
+          <div>
+            <h1>SAS TLF Assistant</h1>
+            <p>Local MVP</p>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="nav-button active" data-tab="knowledge">Knowledge Base</button>
+          <button class="nav-button" data-tab="parseShell">Clean Shell Agent</button>
+          <button class="nav-button" data-tab="generate">Generate SAS</button>
+          <button class="nav-button" data-tab="history">Run History</button>
+        </nav>
+        <div class="sidebar-status" id="healthStatus">Starting up...</div>
+      </aside>
+
+      <main class="content">
+        <section class="topbar">
+          <div>
+            <h2 id="pageTitle">Knowledge Base</h2>
+            <p id="pageSubtitle">Upload pairs or scan output folders to build the library.</p>
+          </div>
+          <div class="button-row tight">
+            <button class="ghost-button" id="seedButton" type="button">Load Sample</button>
+            <button class="ghost-button danger-button" id="clearKbButton" type="button">Clear Knowledge Base</button>
+          </div>
+        </section>
+
+        <section class="tab-panel active" id="knowledgePanel">
+          <div class="workspace-grid two-column">
+            <div class="stack">
+              <form class="panel" id="directoryScanForm">
+                <div class="panel-heading">
+                  <h3>Scan Output Directory</h3>
+                  <p>Scan the first page for the Program: path note and bulk-build the library.</p>
+                </div>
+
+                <div class="form-grid">
+                  <label>
+                    Study ID
+                    <input name="study_id" placeholder="STUDY001" />
+                  </label>
+                  <label>
+                    Max Outputs
+                    <input name="max_files" type="number" min="1" max="10000" value="1000" />
+                  </label>
+                </div>
+
+                <label>
+                  Output Directory
+                  <input name="output_dir" placeholder="C:\Studies\STUDY001\outputs" required />
+                </label>
+
+                <label>
+                  Program Search Directories
+                  <textarea name="program_dirs" rows="3" placeholder="Optional. Add one directory per line if output footers contain stale or relative program paths."></textarea>
+                </label>
+
+                <label>
+                  Dataset Path
+                  <input name="dataset_path" placeholder="C:\Studies\STUDY001\adam" />
+                </label>
+
+                <div class="file-grid">
+                  <label class="file-input">
+                    <span>Shell Documents</span>
+                    <input name="shell_document_files" type="file" accept=".txt,.rtf,.docx,.xlsx,.pdf" multiple />
+                  </label>
+                  <label class="file-input">
+                    <span>MDDT File</span>
+                    <input name="mddt_file" type="file" accept=".txt,.csv,.xlsx,.docx,.pdf" />
+                  </label>
+                </div>
+
+                <label class="checkbox-line">
+                  <input name="recursive" type="checkbox" checked />
+                  <span>Scan subfolders</span>
+                </label>
+
+                <div class="button-row">
+                  <button class="primary-button" type="submit">Scan and Build Library</button>
+                  <span class="inline-status" id="scanStatus"></span>
+                </div>
+
+                <div class="scan-report" id="scanReport"></div>
+              </form>
+
+              <form class="panel" id="exampleForm">
+                <div class="panel-heading">
+                  <h3>Add Historical Pair</h3>
+                  <p>Program and output are required; shell is recommended.</p>
+                </div>
+
+                <div class="form-grid">
+                  <label>
+                    Study ID
+                    <input name="study_id" placeholder="STUDY001" />
+                  </label>
+                  <label>
+                    TLF Number
+                    <input name="tlf_number" placeholder="14.1.1" />
+                  </label>
+                  <label>
+                    Type
+                    <select name="tlf_type">
+                      <option value="table">Table</option>
+                      <option value="listing">Listing</option>
+                      <option value="figure">Figure</option>
+                    </select>
+                  </label>
+                  <label>
+                    Population
+                    <input name="population" placeholder="Safety Population" />
+                  </label>
+                </div>
+
+                <label>
+                  Title
+                  <input name="title" placeholder="Summary of Demographic Characteristics" />
+                </label>
+
+                <label>
+                  Endpoint
+                  <input name="endpoint" placeholder="Demographics, AEs, Labs" />
+                </label>
+
+                <div class="form-grid">
+                  <label>
+                    Source Datasets
+                    <input name="source_datasets" placeholder="ADSL, ADAE" />
+                  </label>
+                  <label>
+                    Macros
+                    <input name="macros" placeholder="%tlf_header, %popfmt" />
+                  </label>
+                </div>
+
+                <label>
+                  Dataset Path
+                  <input name="dataset_path" placeholder="C:\Studies\STUDY001\adam" />
+                </label>
+
+                <div class="file-grid">
+                  <label class="file-input">
+                    <span>SAS Program</span>
+                    <input name="program_file" type="file" accept=".sas,.txt" required />
+                  </label>
+                  <label class="file-input">
+                    <span>Output</span>
+                    <input name="output_file" type="file" accept=".rtf,.txt,.lst,.html,.pdf,.xlsx" required />
+                  </label>
+                  <label class="file-input">
+                    <span>Shell</span>
+                    <input name="shell_file" type="file" accept=".txt,.rtf,.docx,.xlsx,.pdf" />
+                  </label>
+                  <label class="file-input">
+                    <span>MDDT File</span>
+                    <input name="mddt_file" type="file" accept=".txt,.csv,.xlsx,.docx,.pdf" />
+                  </label>
+                </div>
+
+                <label>
+                  Notes
+                  <textarea name="notes" rows="3" placeholder="Any study conventions, derivation caveats, or validation notes."></textarea>
+                </label>
+
+                <div class="button-row">
+                  <button class="primary-button" type="submit">Add to Knowledge Base</button>
+                  <span class="inline-status" id="exampleStatus"></span>
+                </div>
+              </form>
+            </div>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <h3>Stored Examples</h3>
+                <p id="exampleCount">No examples loaded yet.</p>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Study</th>
+                      <th>TLF</th>
+                      <th>Type</th>
+                      <th>Title</th>
+                      <th>Datasets</th>
+                      <th>Dataset Path</th>
+                      <th>Shell/MDDT</th>
+                    </tr>
+                  </thead>
+                  <tbody id="examplesBody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="parseShellPanel">
+          <div class="workspace-grid generate-layout">
+            <form class="panel" id="parseShellForm">
+              <div class="panel-heading">
+                <h3>Clean Shell Document</h3>
+                <p>Use knowledge-base examples and the configured LLM to keep only clean TFL outputs.</p>
+              </div>
+
+              <label>
+                Original Shell Document Path
+                <input name="shell_document_path" placeholder="Optional if shell file is uploaded" />
+              </label>
+
+              <label class="file-input full">
+                <span>Original Shell File</span>
+                <input name="shell_file" type="file" accept=".docx,.txt,.rtf" />
+              </label>
+
+              <label>
+                Clean Shell Output Folder
+                <input name="output_dir" placeholder="Optional for uploaded files, e.g. C:\Studies\NEWSTUDY\shells" />
+              </label>
+
+              <div class="form-grid">
+                <label>
+                  Similar Examples
+                  <input name="top_k" type="number" min="1" max="10" value="5" />
+                </label>
+                <label class="checkbox-line compact-checkbox">
+                  <input name="use_llm" type="checkbox" checked />
+                  <span>Use configured LLM</span>
+                </label>
+              </div>
+
+              <div class="button-row">
+                <button class="primary-button" type="submit">Create Clean Shell</button>
+                <span class="inline-status" id="parseShellStatus"></span>
+              </div>
+            </form>
+
+            <section class="panel output-panel">
+              <div class="panel-heading">
+                <h3>Clean Shell Result</h3>
+                <p id="parseShellSummary">Run the agent to create a _clean shell document.</p>
+              </div>
+              <div class="parse-shell-result" id="parseShellResult"></div>
+              <h4>Preview</h4>
+              <pre class="json-box clean-preview" id="parseShellPreview"></pre>
+              <div class="clean-chat">
+                <div class="panel-heading compact-heading">
+                  <h4>Refine With LLM</h4>
+                  <p>Ask for focused edits after the clean shell is created.</p>
+                </div>
+                <div class="clean-chat-log" id="cleanShellChatLog"></div>
+                <form id="cleanShellChatForm" class="clean-chat-form">
+                  <label>
+                    Refinement Prompt
+                    <textarea name="instruction" rows="3" placeholder="Example: Keep only Table 14-11.32.2 and add the footnote section after the row template."></textarea>
+                  </label>
+                  <div class="button-row">
+                    <button class="primary-button" type="submit" id="cleanShellChatButton" disabled>Apply LLM Edit</button>
+                    <span class="inline-status" id="cleanShellChatStatus"></span>
+                  </div>
+                </form>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="generatePanel">
+          <div class="workspace-grid generate-layout">
+            <form class="panel" id="generateForm">
+              <div class="panel-heading">
+                <h3>New Study Shell</h3>
+                <p>Upload a shell and retrieve similar historical TLFs.</p>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  New Study ID
+                  <input name="study_id" placeholder="NEWSTUDY" />
+                </label>
+                <label>
+                  TLF Number
+                  <input name="tlf_number" placeholder="14.1.1" />
+                </label>
+                <label>
+                  Type
+                  <select name="tlf_type">
+                    <option value="">Auto-detect</option>
+                    <option value="table">Table</option>
+                    <option value="listing">Listing</option>
+                    <option value="figure">Figure</option>
+                  </select>
+                </label>
+                <label>
+                  Similar Examples
+                  <input name="top_k" type="number" min="1" max="10" value="5" />
+                </label>
+              </div>
+
+              <label>
+                Override Title
+                <input name="title" placeholder="Optional title if shell parsing needs help" />
+              </label>
+              <div class="form-grid">
+                <label>
+                  Population
+                  <input name="population" placeholder="Safety Population" />
+                </label>
+                <label>
+                  Source Datasets
+                  <input name="source_datasets" placeholder="ADSL, ADAE, ADLB" />
+                </label>
+              </div>
+
+              <label>
+                ADaM Dataset Path
+                <input name="dataset_path" placeholder="C:\Studies\NEWSTUDY\adam" />
+              </label>
+
+              <label>
+                SAS Program Output Folder
+                <input name="program_output_dir" placeholder="C:\Studies\NEWSTUDY\programs\generated" required />
+              </label>
+
+              <div class="file-grid">
+                <label class="file-input">
+                  <span>Shell File</span>
+                  <input name="shell_file" type="file" accept=".txt,.rtf,.docx,.xlsx,.pdf" />
+                </label>
+                <label class="file-input">
+                  <span>MDDT File</span>
+                  <input name="mddt_file" type="file" accept=".txt,.csv,.xlsx,.docx,.pdf" />
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  Shell Document Path
+                  <input name="shell_document_path" placeholder="Optional if shell file is not uploaded" />
+                </label>
+                <label>
+                  MDDT Document Path
+                  <input name="mddt_path" placeholder="Optional if MDDT file is not uploaded" />
+                </label>
+              </div>
+
+              <label class="checkbox-line">
+                <input name="use_llm" type="checkbox" checked />
+                <span>Use configured LLM when available</span>
+              </label>
+
+              <div class="button-row">
+                <button class="primary-button" type="submit">Generate SAS</button>
+                <span class="inline-status" id="generateStatus"></span>
+              </div>
+            </form>
+
+            <section class="panel output-panel">
+              <div class="panel-heading">
+                <h3>Generated Program</h3>
+                <p id="runSummary">Generate a shell to see shell structure, retrieved examples, and SAS code.</p>
+              </div>
+              <div class="result-grid">
+                <div>
+                  <h4>Shell Structure</h4>
+                  <pre class="json-box" id="parsedShell">{}</pre>
+                </div>
+                <div>
+                  <h4>Retrieved Examples</h4>
+                  <div class="retrieval-list" id="retrievalList"></div>
+                </div>
+              </div>
+
+              <div class="code-toolbar">
+                <h4>SAS Program</h4>
+                <div class="button-row tight">
+                  <button class="ghost-button" id="downloadProgram" type="button">Download .sas</button>
+                  <button class="ghost-button" id="validateButton" type="button">Validate</button>
+                </div>
+              </div>
+              <textarea class="code-editor" id="programEditor" spellcheck="false"></textarea>
+
+              <label>
+                Optional SAS Log
+                <textarea id="logInput" rows="5" placeholder="Paste a SAS log here, then click Validate."></textarea>
+              </label>
+
+              <div class="validation-box" id="validationBox"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="historyPanel">
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Generation Runs</h3>
+              <p>Recent generated programs and validation statuses.</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>TLF</th>
+                    <th>Title</th>
+                    <th>Status</th>
+                    <th>Retrieved</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody id="runsBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js?v=0.2.13"></script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+local.env
+.env
+data/*.sqlite3
+runs/
+sas-tlf-assistant-mvp.zip
