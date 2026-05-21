@@ -30,6 +30,12 @@ http://127.0.0.1:8000
 
 The Clean Shell Agent reads either a local shell document path or an uploaded shell file and creates a clean shell file. The clean document is built from the new shell itself: each individual Table, Listing, and Figure shell keeps its original rows, applies its assigned treatment header horizontally, and expands the placeholder column under the original shell header across the expanded header columns. Retrieved knowledge-base examples and the configured LLM are used as interpretation support, not as a requirement to match a specific TFL number.
 
+DOCX and RTF clean-shell outputs are written in landscape layout with 10-point text. The clean shell uses the treatment-column header table for the corresponding header without adding an extra underline separator row. Superscript and subscript markers from DOCX header definitions are preserved in generated DOCX output. In DOCX output, the expanded column headers are rendered as their own Word table, and the shell/body rows are rendered as a separate Word table with matching column widths.
+
+The clean-shell reader preserves leading spaces from original shell row labels where possible. Multi-line shell rows are split into matching label/value rows before expansion, and generated DOCX value columns are centered so masked placeholders keep a similar position within each expanded column.
+
+Blank spacer rows inside the original shell table are retained between variable groups. For multi-level DOCX headers, adjacent repeated first-level header cells are merged horizontally while the second-level columns remain separate.
+
 For path-based inputs, it writes the clean file in the same folder. For uploaded files, provide **Clean Shell Output Folder** if you want the clean file written to a specific location; otherwise it is saved under `runs/clean_shells`.
 
 For example:

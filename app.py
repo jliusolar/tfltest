@@ -34,7 +34,10 @@ DATA_DIR = ROOT / "data"
 RUNS_DIR = ROOT / "runs"
 SAMPLES_DIR = ROOT / "samples"
 DB_PATH = DATA_DIR / "tlf_assistant.sqlite3"
-APP_VERSION = "0.2.13"
+APP_VERSION = "0.2.20"
+CLEAN_SHELL_FONT_SIZE_HALF_POINTS = 20
+DOCX_PORTRAIT_CONTENT_WIDTH_TWIPS = 10800
+DOCX_LANDSCAPE_CONTENT_WIDTH_TWIPS = 14400
 LOCAL_ENV_PATH = ROOT / "local.env"
 OUTPUT_EXTENSIONS = {".rtf", ".txt", ".lst", ".html", ".htm", ".pdf", ".xlsx", ".docx"}
 PROGRAM_EXTENSIONS = {".sas"}
@@ -610,9 +613,9 @@ def parse_shell_agent(payload: dict[str, Any]) -> dict[str, Any]:
     clean_path.parent.mkdir(parents=True, exist_ok=True)
 
     if suffix == ".docx":
-        write_docx_from_lines(clean_path, plan["cleaned_lines"])
+        write_docx_from_lines(clean_path, plan["cleaned_lines"], landscape=True, render_tables=True)
     elif suffix == ".rtf":
-        clean_path.write_text(lines_to_rtf(plan["cleaned_lines"]), encoding="utf-8")
+        clean_path.write_text(lines_to_rtf(plan["cleaned_lines"], landscape=True), encoding="utf-8")
     else:
         clean_path.write_text("\n".join(plan["cleaned_lines"]) + "\n", encoding="utf-8")
 
@@ -1089,9 +1092,9 @@ def write_clean_shell_lines(clean_path: Path, lines: list[str]) -> None:
     suffix = clean_path.suffix.lower()
     clean_path.parent.mkdir(parents=True, exist_ok=True)
     if suffix == ".docx":
-        write_docx_from_lines(clean_path, lines)
+        write_docx_from_lines(clean_path, lines, landscape=True, render_tables=True)
     elif suffix == ".rtf":
-        clean_path.write_text(lines_to_rtf(lines), encoding="utf-8")
+        clean_path.write_text(lines_to_rtf(lines, landscape=True), encoding="utf-8")
     else:
         clean_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1150,22 +1153,68 @@ def collect_docx_block_lines(root: ElementTree.Element) -> list[str]:
 
 
 def docx_table_lines(table: ElementTree.Element) -> list[str]:
-    lines: list[str] = []
+    rows: list[list[str]] = []
     for row in [child for child in list(table) if local_xml_name(child.tag) == "tr"]:
-        cells: list[str] = []
+        cell_paragraphs: list[list[str]] = []
         for cell in [child for child in list(row) if local_xml_name(child.tag) == "tc"]:
-            text = docx_cell_text(cell)
+            texts = docx_cell_paragraph_texts(cell)
             span = docx_grid_span(cell)
-            cells.extend([text] * max(1, span))
-        if any(cell.strip() for cell in cells):
-            lines.append(" | ".join(cells))
-    return lines
+            cell_paragraphs.extend([texts] * max(1, span))
+        split_count = docx_row_split_count(cell_paragraphs)
+        if split_count > 1:
+            for split_index in range(split_count):
+                cells = [docx_cell_text_at(texts, split_index, split_count) for texts in cell_paragraphs]
+                rows.append(cells)
+            continue
+        cells = [docx_cell_text_from_paragraphs(texts) for texts in cell_paragraphs]
+        rows.append(cells)
+
+    while rows and not any(cell.strip() for cell in rows[0]):
+        rows.pop(0)
+    while rows and not any(cell.strip() for cell in rows[-1]):
+        rows.pop()
+    return [" | ".join(cells) for cells in rows]
 
 
 def docx_cell_text(cell: ElementTree.Element) -> str:
+    return docx_cell_text_from_paragraphs(docx_cell_paragraph_texts(cell))
+
+
+def docx_cell_paragraph_texts(cell: ElementTree.Element) -> list[str]:
     paragraphs = [node for node in cell.iter() if local_xml_name(node.tag) == "p"]
-    parts = [clean_header_line(docx_paragraph_text(paragraph)) for paragraph in paragraphs]
-    return " ".join(part for part in parts if part)
+    return [normalize_docx_cell_text(docx_paragraph_text(paragraph)) for paragraph in paragraphs]
+
+
+def docx_cell_text_from_paragraphs(paragraphs: list[str]) -> str:
+    parts = [part for part in paragraphs if part.strip()]
+    return " ".join(parts)
+
+
+def docx_row_split_count(cell_paragraphs: list[list[str]]) -> int:
+    if len(cell_paragraphs) < 2:
+        return 1
+    first_cell_count = len([item for item in cell_paragraphs[0] if item.strip()])
+    if first_cell_count <= 1:
+        return 1
+    value_counts = [len([item for item in texts if item.strip()]) for texts in cell_paragraphs[1:]]
+    return first_cell_count if any(count == first_cell_count for count in value_counts) else 1
+
+
+def docx_cell_text_at(paragraphs: list[str], index: int, split_count: int) -> str:
+    parts = [part for part in paragraphs if part.strip()]
+    if len(parts) == split_count:
+        return parts[index]
+    if len(parts) == 1:
+        return parts[0]
+    return ""
+
+
+def normalize_docx_cell_text(value: str) -> str:
+    text = value.replace("\xa0", " ").rstrip()
+    leading = re.match(r"^[ \t]*", text).group(0)
+    body = text[len(leading) :]
+    body = re.sub(r"\s+", " ", body).strip()
+    return f"{leading}{body}" if body else ""
 
 
 def docx_grid_span(cell: ElementTree.Element) -> int:
@@ -1200,16 +1249,36 @@ def collect_docx_paragraph_entries(root: ElementTree.Element) -> list[dict[str, 
 
 
 def docx_paragraph_text(paragraph: ElementTree.Element) -> str:
+    return "".join(docx_inline_text(paragraph))
+
+
+def docx_inline_text(node: ElementTree.Element, vertical_align: str = "") -> list[str]:
     pieces: list[str] = []
-    for node in paragraph.iter():
-        name = local_xml_name(node.tag)
-        if name == "t":
-            pieces.append(node.text or "")
-        elif name == "tab":
-            pieces.append("\t")
-        elif name in {"br", "cr"}:
-            pieces.append(" ")
-    return "".join(pieces)
+    name = local_xml_name(node.tag)
+    if name == "r":
+        vertical_align = docx_run_vertical_align(node) or vertical_align
+    if name == "t":
+        text = node.text or ""
+        if vertical_align == "superscript" and text.strip():
+            return [f"^{{{text}}}"]
+        if vertical_align == "subscript" and text.strip():
+            return [f"_{{{text}}}"]
+        return [text]
+    if name == "tab":
+        return ["\t"]
+    if name in {"br", "cr"}:
+        return [" "]
+    for child in list(node):
+        pieces.extend(docx_inline_text(child, vertical_align))
+    return pieces
+
+
+def docx_run_vertical_align(run: ElementTree.Element) -> str:
+    for node in run.iter():
+        if local_xml_name(node.tag) != "vertAlign":
+            continue
+        return (node.attrib.get(f"{{{W_NS}}}val") or node.attrib.get("val") or "").strip()
+    return ""
 
 
 def local_xml_name(tag: str) -> str:
@@ -2162,8 +2231,10 @@ def clean_original_section_lines(
             continue
         if is_existing_column_block_line(stripped):
             continue
-        if not in_notes and is_table_row_line(stripped):
-            expanded_row = expand_original_shell_body_row(stripped, column_count, pending_stub_heading)
+        if not in_notes and is_table_row_line(line):
+            if is_blank_table_row(line) and not seen_shell_body:
+                continue
+            expanded_row = expand_original_shell_body_row(line, column_count, pending_stub_heading)
             pending_stub_heading = ""
             if expanded_row:
                 cleaned.append(expanded_row)
@@ -2188,10 +2259,10 @@ def shell_stub_heading_from_header_row(line: str) -> str:
 
 
 def expand_original_shell_body_row(line: str, column_count: int, stub_heading: str = "") -> str:
-    cells = split_header_columns(line, keep_empty=True)
+    cells = split_docx_table_cells(line)
     if not cells:
         return line
-    label = cells[0] if cells else ""
+    label = cells[0].rstrip() if cells else ""
     values = cells[1:]
     if stub_heading and not label:
         label = stub_heading
@@ -2218,6 +2289,10 @@ def expand_original_shell_values(values: list[str], column_count: int) -> list[s
         repeats = math.ceil(column_count / len(cleaned))
         return (cleaned * repeats)[:column_count]
     return cleaned[:column_count]
+
+
+def is_blank_table_row(line: str) -> bool:
+    return "|" in line and not any(cell.strip() for cell in split_docx_table_cells(line))
 
 
 def is_shell_note_start_line(line: str) -> bool:
@@ -2448,6 +2523,8 @@ def parse_treatment_headers(lines: list[str], start: int, end: int) -> dict[str,
             continue
         if not current_id or not stripped:
             continue
+        if is_blank_table_row(stripped):
+            continue
         if re.match(r"(?i)^(footnote|note|tfl shell notes|analysis\s*\||category using in header)\b", stripped):
             collecting_table = False
             current_id = ""
@@ -2542,6 +2619,25 @@ def format_horizontal_header_rows(header_lines: list[str], columns: list[str]) -
         return [" | " + " | ".join(values)] if values else []
     rows = normalize_header_display_rows(rows, len(columns))
     return [" | ".join(row).rstrip() for row in rows if any(cell.strip() for cell in row)]
+
+
+def has_multi_level_header(rows: list[list[str]]) -> bool:
+    if len(rows) < 2:
+        return False
+    first_level = rows[0][1:] if rows[0] else []
+    second_level = rows[1][1:] if rows[1] else []
+    return any(cell.strip() for cell in first_level) and any(cell.strip() for cell in second_level)
+
+
+def header_separator_row(first_level_row: list[str]) -> list[str]:
+    separators: list[str] = []
+    for index, cell in enumerate(first_level_row):
+        if index == 0:
+            separators.append("")
+            continue
+        text = clean_header_line(cell)
+        separators.append("_" * max(8, min(len(text), 32)) if text else "")
+    return separators
 
 
 def normalize_header_display_rows(rows: list[list[str]], column_count: int) -> list[list[str]]:
@@ -2686,24 +2782,56 @@ def write_clean_docx(raw: bytes, clean_path: Path, plan: dict[str, Any]) -> None
                 clean_archive.writestr(info, data)
 
 
-def write_docx_from_lines(clean_path: Path, lines: list[str]) -> None:
+def write_docx_from_lines(
+    clean_path: Path,
+    lines: list[str],
+    landscape: bool = False,
+    render_tables: bool = False,
+    font_size_half_points: int = CLEAN_SHELL_FONT_SIZE_HALF_POINTS,
+) -> None:
     body_parts: list[str] = []
     index = 0
     while index < len(lines):
         line = lines[index]
-        if is_table_row_line(line):
+        if render_tables and is_table_row_line(line):
             table_lines: list[str] = []
             while index < len(lines) and is_table_row_line(lines[index]):
                 table_lines.append(lines[index])
                 index += 1
-            body_parts.append(ElementTree.tostring(create_docx_table(table_lines), encoding="unicode"))
+            table_blocks = split_clean_shell_table_block(table_lines)
+            column_widths = clean_shell_table_column_widths(table_blocks, landscape=landscape)
+            for block_index, table_block in enumerate(table_blocks):
+                if block_index:
+                    body_parts.append(
+                        ElementTree.tostring(
+                            create_docx_paragraph("", font_size_half_points=font_size_half_points),
+                            encoding="unicode",
+                        )
+                    )
+                body_parts.append(
+                    ElementTree.tostring(
+                        create_docx_table(
+                            table_block,
+                            font_size_half_points=font_size_half_points,
+                            column_widths=column_widths,
+                            merge_repeated_first_row=block_index == 0 and len(table_blocks) > 1,
+                        ),
+                        encoding="unicode",
+                    )
+                )
             continue
-        body_parts.append(ElementTree.tostring(create_docx_paragraph(line), encoding="unicode"))
+        body_parts.append(
+            ElementTree.tostring(
+                create_docx_paragraph(line, font_size_half_points=font_size_half_points),
+                encoding="unicode",
+            )
+        )
         index += 1
     body = "".join(body_parts)
+    section_properties = docx_section_properties(landscape=landscape)
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        f'<w:document xmlns:w="{W_NS}"><w:body>{body}<w:sectPr /></w:body></w:document>'
+        f'<w:document xmlns:w="{W_NS}"><w:body>{body}{section_properties}</w:body></w:document>'
     )
     content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -2721,13 +2849,103 @@ def write_docx_from_lines(clean_path: Path, lines: list[str]) -> None:
         archive.writestr("word/document.xml", document.encode("utf-8"))
 
 
+def docx_section_properties(landscape: bool = False) -> str:
+    if not landscape:
+        return "<w:sectPr />"
+    return (
+        '<w:sectPr>'
+        '<w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>'
+        '<w:pgMar w:top="1080" w:right="720" w:bottom="720" w:left="720" '
+        'w:header="720" w:footer="720" w:gutter="0"/>'
+        "</w:sectPr>"
+    )
+
+
 def is_table_row_line(line: str) -> bool:
     return "|" in line and not line.strip().lower().startswith("http")
 
 
-def create_docx_table(lines: list[str]) -> ElementTree.Element:
+def split_clean_shell_table_block(lines: list[str]) -> list[list[str]]:
+    if not lines:
+        return []
+    header_lines: list[str] = []
+    body_start = 0
+
+    for index, line in enumerate(lines):
+        if is_leading_header_table_row(line) and not is_blank_table_row(line):
+            header_lines.append(line)
+            body_start = index + 1
+            continue
+        break
+
+    if header_lines and body_start < len(lines) and is_shell_column_stub_header_row(lines[body_start]):
+        header_lines.append(lines[body_start])
+        body_start += 1
+
+    body_lines = lines[body_start:]
+    if header_lines and body_lines:
+        return [header_lines, body_lines]
+    return [lines]
+
+
+def is_leading_header_table_row(line: str) -> bool:
+    return line.lstrip().startswith("|")
+
+
+def is_shell_column_stub_header_row(line: str) -> bool:
+    cells = split_docx_table_cells(line)
+    if len(cells) < 2:
+        return False
+    value_text = " ".join(cell for cell in cells[1:] if cell)
+    return bool(
+        re.search(
+            r"(?i)\bN\s*=|\bn\s*\(%\)|\bmean\b|\bsd\b|\bmedian\b|\bmin\b|\bmax\b|\bq1\b|\bq3\b|%",
+            value_text,
+        )
+    )
+
+
+def clean_shell_table_column_widths(table_blocks: list[list[str]], landscape: bool = False) -> list[int]:
+    column_count = max(
+        (
+            len(split_docx_table_cells(line))
+            for block in table_blocks
+            for line in block
+            if is_table_row_line(line)
+        ),
+        default=0,
+    )
+    if column_count <= 0:
+        return []
+    total_width = DOCX_LANDSCAPE_CONTENT_WIDTH_TWIPS if landscape else DOCX_PORTRAIT_CONTENT_WIDTH_TWIPS
+    if column_count == 1:
+        return [total_width]
+    if column_count == 2:
+        stub_width = int(total_width * 0.55)
+    else:
+        stub_width = min(4320, max(2880, int(total_width * 0.32)))
+    remaining = max(total_width - stub_width, column_count - 1)
+    data_width = remaining // (column_count - 1)
+    widths = [stub_width] + [data_width] * (column_count - 1)
+    widths[-1] += total_width - sum(widths)
+    return widths
+
+
+def create_docx_table(
+    lines: list[str],
+    font_size_half_points: int = CLEAN_SHELL_FONT_SIZE_HALF_POINTS,
+    column_widths: list[int] | None = None,
+    merge_repeated_first_row: bool = False,
+) -> ElementTree.Element:
     table = ElementTree.Element(f"{{{W_NS}}}tbl")
     table_props = ElementTree.SubElement(table, f"{{{W_NS}}}tblPr")
+    widths = column_widths or clean_shell_table_column_widths([lines], landscape=True)
+    total_width = sum(widths) if widths else DOCX_LANDSCAPE_CONTENT_WIDTH_TWIPS
+    table_width = ElementTree.SubElement(table_props, f"{{{W_NS}}}tblW")
+    table_width.set(f"{{{W_NS}}}w", str(total_width))
+    table_width.set(f"{{{W_NS}}}type", "dxa")
+    table_layout = ElementTree.SubElement(table_props, f"{{{W_NS}}}tblLayout")
+    table_layout.set(f"{{{W_NS}}}type", "fixed")
     borders = ElementTree.SubElement(table_props, f"{{{W_NS}}}tblBorders")
     for border_name in ("top", "left", "bottom", "right", "insideH", "insideV"):
         border = ElementTree.SubElement(borders, f"{{{W_NS}}}{border_name}")
@@ -2735,20 +2953,128 @@ def create_docx_table(lines: list[str]) -> ElementTree.Element:
         border.set(f"{{{W_NS}}}sz", "4")
         border.set(f"{{{W_NS}}}space", "0")
         border.set(f"{{{W_NS}}}color", "auto")
-    for line in lines:
+    if widths:
+        table_grid = ElementTree.SubElement(table, f"{{{W_NS}}}tblGrid")
+        for width in widths:
+            grid_col = ElementTree.SubElement(table_grid, f"{{{W_NS}}}gridCol")
+            grid_col.set(f"{{{W_NS}}}w", str(width))
+    for row_index, line in enumerate(lines):
         row = ElementTree.SubElement(table, f"{{{W_NS}}}tr")
-        for cell_text in split_header_columns(line, keep_empty=True):
+        cells = split_docx_table_cells(line)
+        if widths and len(cells) < len(widths):
+            cells.extend([""] * (len(widths) - len(cells)))
+        elif widths and len(cells) > len(widths):
+            cells = cells[: len(widths)]
+        merge_spans = (
+            repeated_first_level_header_spans(cells)
+            if merge_repeated_first_row and row_index == 0 and widths
+            else [(index, 1) for index in range(len(cells))]
+        )
+        for cell_index, span in merge_spans:
+            cell_text = cells[cell_index]
             cell = ElementTree.SubElement(row, f"{{{W_NS}}}tc")
-            ElementTree.SubElement(cell, f"{{{W_NS}}}tcPr")
-            cell.append(create_docx_paragraph(cell_text))
+            cell_props = ElementTree.SubElement(cell, f"{{{W_NS}}}tcPr")
+            if widths and cell_index < len(widths):
+                span_width = sum(widths[cell_index : cell_index + span])
+                cell_width = ElementTree.SubElement(cell_props, f"{{{W_NS}}}tcW")
+                cell_width.set(f"{{{W_NS}}}w", str(span_width))
+                cell_width.set(f"{{{W_NS}}}type", "dxa")
+            if span > 1:
+                grid_span = ElementTree.SubElement(cell_props, f"{{{W_NS}}}gridSpan")
+                grid_span.set(f"{{{W_NS}}}val", str(span))
+            alignment = "left" if cell_index == 0 else "center"
+            cell.append(
+                create_docx_paragraph(
+                    cell_text,
+                    font_size_half_points=font_size_half_points,
+                    alignment=alignment,
+                )
+            )
     return table
 
 
-def create_docx_paragraph(text: str) -> ElementTree.Element:
+def repeated_first_level_header_spans(cells: list[str]) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while index < len(cells):
+        text = clean_header_line(cells[index])
+        if index == 0 or not text:
+            spans.append((index, 1))
+            index += 1
+            continue
+        span = 1
+        while index + span < len(cells) and clean_header_line(cells[index + span]).lower() == text.lower():
+            span += 1
+        spans.append((index, span))
+        index += span
+    return spans
+
+
+def split_docx_table_cells(line: str) -> list[str]:
+    if "|" in line:
+        parts = line.split("|")
+    elif "\t" in line:
+        parts = line.split("\t")
+    else:
+        parts = [line]
+    cells: list[str] = []
+    for index, part in enumerate(parts):
+        if index == 0:
+            cells.append(normalize_docx_cell_text(part).rstrip())
+        else:
+            cells.append(clean_header_line(part))
+    return cells
+
+
+def create_docx_paragraph(
+    text: str,
+    font_size_half_points: int = CLEAN_SHELL_FONT_SIZE_HALF_POINTS,
+    alignment: str = "left",
+) -> ElementTree.Element:
     paragraph = ElementTree.Element(f"{{{W_NS}}}p")
+    paragraph_props = ElementTree.SubElement(paragraph, f"{{{W_NS}}}pPr")
+    if alignment:
+        justify = ElementTree.SubElement(paragraph_props, f"{{{W_NS}}}jc")
+        justify.set(f"{{{W_NS}}}val", alignment)
     if not text:
         return paragraph
+    for piece, vertical_align in inline_text_runs(text):
+        append_docx_run(paragraph, piece, font_size_half_points, vertical_align)
+    return paragraph
+
+
+def inline_text_runs(text: str) -> list[tuple[str, str]]:
+    runs: list[tuple[str, str]] = []
+    marker_re = re.compile(r"(\^\{([^{}]+)\}|_\{([^{}]+)\})")
+    position = 0
+    for match in marker_re.finditer(text):
+        if match.start() > position:
+            runs.append((text[position : match.start()], ""))
+        if match.group(2) is not None:
+            runs.append((match.group(2), "superscript"))
+        else:
+            runs.append((match.group(3), "subscript"))
+        position = match.end()
+    if position < len(text):
+        runs.append((text[position:], ""))
+    return runs or [(text, "")]
+
+
+def append_docx_run(
+    paragraph: ElementTree.Element,
+    text: str,
+    font_size_half_points: int,
+    vertical_align: str = "",
+) -> None:
     run = ElementTree.SubElement(paragraph, f"{{{W_NS}}}r")
+    run_props = ElementTree.SubElement(run, f"{{{W_NS}}}rPr")
+    size = ElementTree.SubElement(run_props, f"{{{W_NS}}}sz")
+    size.set(f"{{{W_NS}}}val", str(font_size_half_points))
+    size_cs = ElementTree.SubElement(run_props, f"{{{W_NS}}}szCs")
+    size_cs.set(f"{{{W_NS}}}val", str(font_size_half_points))
+    if vertical_align:
+        vert_align = ElementTree.SubElement(run_props, f"{{{W_NS}}}vertAlign")
+        vert_align.set(f"{{{W_NS}}}val", vertical_align)
     parts = text.split("\t")
     for index, part in enumerate(parts):
         if index:
@@ -2756,12 +3082,16 @@ def create_docx_paragraph(text: str) -> ElementTree.Element:
         text_node = ElementTree.SubElement(run, f"{{{W_NS}}}t")
         text_node.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
         text_node.text = part
-    return paragraph
 
 
-def lines_to_rtf(lines: list[str]) -> str:
+def lines_to_rtf(lines: list[str], landscape: bool = False) -> str:
     escaped_lines = [escape_rtf(line) + r"\par" for line in lines]
-    return "{\\rtf1\\ansi\\deff0\n" + "\n".join(escaped_lines) + "\n}"
+    page_setup = (
+        r"\paperw15840\paperh12240\landscape\margl720\margr720\margt1080\margb720"
+        if landscape
+        else ""
+    )
+    return "{\\rtf1\\ansi\\deff0" + page_setup + r"\fs20" + "\n" + "\n".join(escaped_lines) + "\n}"
 
 
 def escape_rtf(value: str) -> str:
